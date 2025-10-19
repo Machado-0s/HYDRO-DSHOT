@@ -1,0 +1,3 @@
+../Core/Src/uart_cmd.c:32:6:UART_CMD_Init	16	static
+../Core/Src/uart_cmd.c:37:6:process_uart_command	200	static
+../Core/Src/uart_cmd.c:105:6:Debug_Send_DMA	16	static
