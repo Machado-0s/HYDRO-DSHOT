@@ -14,6 +14,14 @@ float pid_last_error = 0;
 float pid_filtered_error = 0;
 volatile float pid_target_speed_rpm = 2000.0f;
 
+volatile float i_term = 0.0;
+volatile float p_term = 0.0;
+volatile float d_term = 0.0;
+
+float PID_KP = 0.5f; //0.28f  // Proportional gain
+float PID_KI = 0.1f;//0.045f // Integral gain
+float PID_KD = 0.01f;  // Derivative gain
+
 // PID Target RPMs - Array to hold target RPM for each motor
 volatile float pid_target_speed_rpms[MOTORS_COUNT]; // DEFINITION: Memory allocated here
 
@@ -495,7 +503,7 @@ uint16_t get_rpm_from_telemetry(uint16_t raw_value) {
     if (raw_value == 0) return 0;
     uint16_t rpm_x10 = (raw_value >> 4);
     return (uint16_t)(((float)rpm_x10 / MOTOR_POLES_NUMBER) * 12);
-}
+}//
 
 /*
 uint16_t pid_calculate_command(uint16_t current_rpm,float target_rpm) {
@@ -626,72 +634,77 @@ uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_s
  * @param current_rpm_unsigned The current measured RPM of the motor (always positive from telemetry).
  * @param target_rpm_signed The desired target RPM (signed: positive for forward, negative for reverse, 0 for stop/brake).
  * @return The calculated DShot command (48-2047 unidirectional).
- */
+*/
 uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed) {
-    // --- For Unidirectional Test: Treat all current RPM as positive ---
-    float current_rpm_for_error_calc = (float)current_rpm_unsigned;
+    float current_rpm = (float)current_rpm_unsigned;
+    float target_rpm = (target_rpm_signed < 0) ? 0.0f : target_rpm_signed;
+    float error = target_rpm - current_rpm;
 
-    // --- Step 2: Calculate Error ---
-    // The error is the difference between the desired signed target and the current motor RPM.
-    // Negative target RPMs are treated as 0 for error calculation to prevent erratic behavior.
-    float effective_target_rpm = (target_rpm_signed < 0) ? 0.0f : target_rpm_signed;
+    // --- More Realistic PID Gains ---
 
-    float error = effective_target_rpm - current_rpm_for_error_calc;
 
-    // --- Step 3: Calculate PID Terms ---
-    float p_term = PID_KP * error;
+    // --- PID Calculations ---
+     p_term = PID_KP * error;
 
-    // Integral term (with windup protection). Reset if effective_target_rpm is 0.
-    if (effective_target_rpm == 0.0f) {
+    // Integral with conditional reset
+/*    if (target_rpm == 0.0f) {
         pid_integral = 0.0f;
     } else {
         pid_integral += error;
-        // Clamp integral term
-        if (pid_integral > 1000) pid_integral = 1000;
-        if (pid_integral < -1000) pid_integral = -1000;
+     //   if (pid_integral > 5000.0f) pid_integral = 5000.0f;
+        if (pid_integral < -5000.0f) pid_integral = -5000.0f;
     }
-    float i_term = PID_KI * pid_integral;
+    */
+    i_term += PID_KI * error*0.0005;
 
-    // Derivative term (with low-pass filter)
-    pid_filtered_error = (PID_D_FILTER_ALPHA * error) + ((1.0f - PID_D_FILTER_ALPHA) * pid_filtered_error);
-    float d_term = PID_KD * (pid_filtered_error - pid_last_error);
-    pid_last_error = pid_filtered_error;
+    // Derivative
+    float error_derivative = error - pid_last_error;
+    pid_last_error = error;
+    pid_filtered_error = (0.3f * error_derivative) + (0.7f * pid_filtered_error);
+     d_term = PID_KD * pid_filtered_error;
 
-    // --- Step 4: Calculate Raw PID Output (signed for internal calculation) ---
-    float raw_pid_output = p_term + i_term + d_term;
+    float pid_output = p_term + i_term + d_term;
 
-    // --- Step 5: Map PID Output to Unidirectional DShot Command (48-2047) ---
-    float dshot_command_float;
+    // --- FIXED: Proper Feedforward and Scaling ---
+    uint16_t dshot_command;
 
-    if (effective_target_rpm <= 0.0f) { // If target RPM is 0 or negative
-        // Command motor stop/idle (DSHOT_BASE_COMMAND = 48)
-        dshot_command_float = (float)DSHOT_BASE_COMMAND;
-        // Reset integral and derivative components for a clean stop
+    if (target_rpm <= 0.0f) {
+        dshot_command = DSHOT_BASE_COMMAND; // 48
         pid_integral = 0.0f;
         pid_last_error = 0.0f;
         pid_filtered_error = 0.0f;
-    } else { // Positive target RPM
-        // Map raw_pid_output (0 to MAX_ABS_RPM_FOR_MAPPING) to DSHOT_BASE_COMMAND to 2047
-        float scaled_output_percent = raw_pid_output / MAX_ABS_RPM_FOR_MAPPING;
-        if (scaled_output_percent > 1.0f) scaled_output_percent = 1.0f; // Cap at max
-        if (scaled_output_percent < 0.0f) scaled_output_percent = 0.0f; // No reverse in unidirectional
+    } else {
+        // Base feedforward for the target RPM
+        // For 1000 RPM target, we need a reasonable DShot command
+        // Typical mapping: 0 RPM = 48, 1000 RPM ≈ 200-400, 10000 RPM = 2047
 
-        dshot_command_float = (scaled_output_percent * (2047.0f - DSHOT_BASE_COMMAND)) + DSHOT_BASE_COMMAND;
+        float base_ff = (float)DSHOT_BASE_COMMAND; // Start at 48
 
-        // Ensure command is at least DSHOT_BASE_COMMAND (48)
-        if (dshot_command_float < DSHOT_BASE_COMMAND) dshot_command_float = DSHOT_BASE_COMMAND;
-        // Clamp to max DShot command
-        if (dshot_command_float > 2047.0f) dshot_command_float = 2047.0f;
+        // Feedforward based on target RPM (open-loop estimate)
+        // Adjust this multiplier based on your motor characteristics
+        float ff_from_target = target_rpm * 0.15f; // 1000 RPM → 150 additional
+
+        // PID correction (scale PID output appropriately)
+        // PID output is in RPM units, scale to DShot units
+        float pid_correction = pid_output * 0.1f; // Scale PID output
+
+        float total_dshot = base_ff + ff_from_target + pid_correction;
+
+        dshot_command = (uint16_t)total_dshot;
+
+        // Clamp to valid range
+        if (dshot_command < DSHOT_BASE_COMMAND) dshot_command = DSHOT_BASE_COMMAND;
+        if (dshot_command > 2047) dshot_command = 2047;
+
+        // DEBUG
+        static uint16_t last_debug_cmd = 0;
+        if (dshot_command != last_debug_cmd || HAL_GetTick() % 1000 == 0) {
+            Debug_Send_DMA("FIXED: Tgt=%.0f, Err=%.0f, FF=%.1f, PID=%.1f, CMD=%u\r\n",
+                         target_rpm, error, ff_from_target, pid_correction, dshot_command);
+            last_debug_cmd = dshot_command;
+        }
     }
 
-    // --- Step 6: Store and Return the Final Command ---
-    uint16_t final_clamped_command = (uint16_t)dshot_command_float;
-    // last_sent_dshot_command is still updated, but its role in direction inference is suppressed
-    last_sent_dshot_command = final_clamped_command;
-
-    // Debug output (uncomment for debugging)
-    // Debug_Send_DMA("PID | Tgt:%.0f | Curr:%.0f | Err:%.0f | P:%.2f | I:%.2f | D:%.2f | Cmd:%u\r\n",
-    //                target_rpm_signed, current_rpm_for_error_calc, error, p_term, i_term, d_term, final_clamped_command);
-
-    return final_clamped_command;
+    last_sent_dshot_command = dshot_command;
+    return dshot_command;
 }

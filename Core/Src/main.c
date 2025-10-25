@@ -96,6 +96,7 @@ extern UART_HandleTypeDef huart1;
 volatile uint8_t dshot_send_flag = 0;
 volatile bool uart_tx_ready = true; // TX flag
 
+float value = 1000.0;
 /* USER CODE END 0 */
 
 /**
@@ -132,7 +133,7 @@ int main(void)
   MX_DMA_Init();
   MX_TIM1_Init();
   MX_TIM4_Init();
-  MX_TIM3_Init();
+  //MX_TIM3_Init();
   MX_USART1_UART_Init();
   UART_CMD_Init(&huart1); // Pass your UART handle
   PWM_Init();
@@ -145,7 +146,7 @@ int main(void)
 
   // Initialize all motor target RPMs to 0.0 (stop)
     for (int i = 0; i < MOTORS_COUNT; i++) {
-        pid_target_speed_rpms[i] = 1000.0f; // All motors initially stopped
+        pid_target_speed_rpms[i] = value; // All motors initially stopped
     }
 
       for (int i = 0; i < MOTORS_COUNT; i++) {
@@ -162,7 +163,7 @@ int main(void)
 
 
   for (int i = 0; i < MOTORS_COUNT; i++) {
-	  motor_values[i] = prepare_Dshot_package(10, true); // Send 0 throttle (disarmed)
+	  motor_values[i] = prepare_Dshot_package(10, false); // Send 0 throttle (disarmed)
      }
 
    for (int t = 0; t < 10; t++){
@@ -175,9 +176,8 @@ int main(void)
 
   /* Infinite loop */
      /* USER CODE BEGIN WHILE */
-     //uint32_t last_servo_time = HAL_GetTick();      // For 20ms servo updates
      uint32_t last_50hz_time = 0;
-     uint32_t last_100hz_time = 0;
+    // uint32_t last_100hz_time = 0;
      uint32_t now2 = HAL_GetTick();
 
 
@@ -185,13 +185,15 @@ int main(void)
      bool telemetry_active = false; // Start with telemetry inactive until first successful read
      uint16_t current_rpm = 0;
 
-     uint32_t last_periodic_print_time = HAL_GetTick();
-      const uint32_t PERIODIC_PRINT_INTERVAL_MS = 100; // 5 seconds
-     float  lastTarget[10] = {0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
+    // uint32_t last_periodic_print_time = HAL_GetTick();
+   //   const uint32_t PERIODIC_PRINT_INTERVAL_MS = 100; // 5 seconds
+   //  float  lastTarget[10] = {0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
+
+
 
   /* Infinite loop */
   while (1) {
-
+	//  Debug_Send_DMA("VALUE:\r\n");
 
 	  // Check if new telemetry data is ready
 	      if (telemetry_done_flag){
@@ -212,6 +214,8 @@ int main(void)
 
 	              if (motor_telemetry_data[m].valid_rpm) {
 	                  current_rpm = motor_telemetry_data[m].raw_rpm_value;
+	                  //Debug_Send_DMA("VALUE: %d %d \r\n",m, current_rpm);
+
 	              }else {
 	            	  //current_rpm_for_pid = (uint32_t)fabsf(current_pid_target);
 	              }
@@ -222,7 +226,7 @@ int main(void)
 	              motor_values[m] = prepare_Dshot_package(new_command, false);
 
 
-	             // Debug_Send_DMA("VALUE: %d %d \r\n",m, new_command);
+	              //Debug_Send_DMA("VALUE: %d %d\r\n",m, new_command);
 
 
 
@@ -250,7 +254,7 @@ int main(void)
 	          update_motors_Tx_Only();
 	      }
 
-
+/*
 	          // --- Periodic RPM and DShot Command Output ---
 	             if ((HAL_GetTick() - last_periodic_print_time) >= PERIODIC_PRINT_INTERVAL_MS ) {
 	                 last_periodic_print_time = HAL_GetTick(); // Reset the timer
@@ -263,19 +267,19 @@ int main(void)
 	                     float current_physical_rpm = current_telemetry_rpm / (14.0f / 2.0f); // Assuming 14 poles / 7 pole pairs
 	                     uint16_t last_dshot_command_sent = (uint16_t)(motor_values[m] >> 4); // Extract throttle from DShot package
 
-	                     Debug_Send_DMA("Motor: %d | Tgt RPM: %.0f | Curr ERPM: %lu | Curr Phys RPM: %.2f | Last DShot Cmd: %u | Valid Telemetry: %s\r\n",
-	                                    m,
-	                                    current_target_rpm,
-	                                    current_telemetry_rpm,
-	                                    current_physical_rpm,
-	                                    last_dshot_command_sent,
-	                                    motor_telemetry_data[m].valid_rpm ? "Yes" : "No");
+	                    // Debug_Send_DMA("Motor: %d | Tgt RPM: %.0f | Curr ERPM: %lu | Curr Phys RPM: %.2f | Last DShot Cmd: %u | Valid Telemetry: %s\r\n",
+	                            //        m,
+	                             //       current_target_rpm,
+	                              //      current_telemetry_rpm,
+	                              //      current_physical_rpm,
+	                                //    last_dshot_command_sent,
+	                                //    motor_telemetry_data[m].valid_rpm ? "Yes" : "No");
 	                 }
 	                // Debug_Send_DMA("---\r\n");
 	                 lastTarget[m] = pid_target_speed_rpms[m];
 	                 }
 	             }
-
+*/
 	             // Check if new UART data is available and process it
 	         	          if (uart_new_data_available) {
 	         	              process_uart_command(); // This will parse and update received_numeric_value
@@ -298,16 +302,16 @@ int main(void)
 	         	         }
 
 	         	         // Update 100Hz motors (every 10ms)
-	         	         if (now2 - last_100hz_time >= 10) {
-	         	             static uint16_t angle_100hz = 500;
-	         	             angle_100hz += 5;
-	         	             if (angle_100hz > 2500) angle_100hz = 500;
+	         	      //   if (now2 - last_100hz_time >= 10) {
+	         	       //      static uint16_t angle_100hz = 500;
+	         	       ////      angle_100hz += 5;
+	         	         ///    if (angle_100hz > 2500) angle_100hz = 500;
 
-	         	             PWM_SetDuty(&htim3, TIM_CHANNEL_1, angle_100hz); // e.g., PB4 - 100Hz
-	         	             PWM_SetDuty(&htim3, TIM_CHANNEL_2, angle_100hz); // e.g., PB5 - 100Hz
+	         	       //      PWM_SetDuty(&htim3, TIM_CHANNEL_1, angle_100hz); // e.g., PB4 - 100Hz
+	         	       //      PWM_SetDuty(&htim3, TIM_CHANNEL_2, angle_100hz); // e.g., PB5 - 100Hz
 
-	         	             last_100hz_time = now2;
-	         	         }
+	         	       //      last_100hz_time = now2;
+	         	       //  }
 
         /* USER CODE BEGIN 3 */
     }
@@ -326,9 +330,11 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     if (huart->Instance == USART1) // Check if it's our USART1
     {
         uart_tx_ready = true; // Mark TX buffer as ready for next transmission
+
     }
 
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None

@@ -31,13 +31,11 @@
 
 
 // PID gains - these will need to be tuned
-#define PID_KP 0.28f  // Proportional gain
-#define PID_KI 0.1f//0.045f // Integral gain
-#define PID_KD 0.01f  // Derivative gain
+
 #define NOMINAL_VOLTAGE 12.4f // Nominal voltage for PID tuning
 #define DSHOT_BASE_COMMAND 48.0f //48 // A safe base throttle value
 
-#define PID_D_FILTER_ALPHA 0.2f // A value between 0.0 and 1.0
+#define PID_D_FILTER_ALPHA 0.3f // A value between 0.0 and 1.0
                                 // Lower values = more filtering (more lag)
                                 // Higher values = less filtering (less lag)
 // Constants for Bi-directional DShot mapping

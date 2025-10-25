@@ -229,7 +229,6 @@ void DMA2_Stream2_IRQHandler(void)
   /* USER CODE END DMA2_Stream2_IRQn 1 */
 }
 
-
 /**
   * @brief This function handles DMA2 stream7 global interrupt.
   */
@@ -243,7 +242,15 @@ void DMA2_Stream7_IRQHandler(void)
 
   /* USER CODE END DMA2_Stream7_IRQn 1 */
 }
-
 /* USER CODE BEGIN 1 */
+// TIM3_IRQHandler (ensure it's only here)
+void TIM3_IRQHandler(void) {
+    if (TIM3->SR & TIM_SR_UIF) {
+        TIM3->SR &= ~TIM_SR_UIF; // Clear the flag
+        dshot_send_flag = 1;     // Set global flag
 
+
+    }
+    // If you use HAL, it might be HAL_TIM_IRQHandler(&htim3); instead, check your auto-generated code.
+}
 /* USER CODE END 1 */
