@@ -1,0 +1,16 @@
+../Drivers/CMSIS/Include/core_cm4.h:1684:22:__NVIC_EnableIRQ	2
+../Drivers/CMSIS/Include/core_cm4.h:1814:22:__NVIC_SetPriority	2
+../Core/Src/dshot.c:49:17:get_all_motors_gpio_mask	2
+../Core/Src/dshot.c:57:6:preset_bb_Dshot_buffers	3
+../Core/Src/dshot.c:77:13:fill_bb_Dshot_buffers	6
+../Core/Src/dshot.c:100:10:prepare_Dshot_package	1
+../Core/Src/dshot.c:107:6:update_motors_Tx_Only	2
+../Core/Src/dshot.c:199:6:setup_Dshot_Tx_Only	2
+../Core/Src/dshot.c:237:21:arm_bdshot_rx_capture	4
+../Core/Src/dshot.c:318:7:DMA2_Stream5_IRQHandler	8
+../Core/Src/dshot.c:379:11:get_BDshot_response	21
+../Core/Src/dshot.c:434:8:BDshot_check_checksum	1
+../Core/Src/dshot.c:443:7:read_BDshot_response	7
+../Core/Src/dshot.c:492:6:process_telemetry_with_new_method	2
+../Core/Src/dshot.c:502:10:get_rpm_from_telemetry	2
+../Core/Src/dshot.c:638:10:pid_calculate_command	7
