@@ -18,8 +18,13 @@ volatile float i_term = 0.0;
 volatile float p_term = 0.0;
 volatile float d_term = 0.0;
 
+//Increase PID_KP if too sluggish.
+//Increase PID_KI if it never quite reaches target.
+//Decrease PID_KD if it oscillates or “buzzes”.
+//If startup is still lazy, bump feedforward to 0.25f
+
 float PID_KP = 0.5f; //0.28f  // Proportional gain
-float PID_KI = 0.1f;//0.045f // Integral gain
+float PID_KI = 0.5f;//0.1f;//0.045f // Integral gain
 float PID_KD = 0.01f;  // Derivative gain
 
 // PID Target RPMs - Array to hold target RPM for each motor
@@ -505,31 +510,6 @@ uint16_t get_rpm_from_telemetry(uint16_t raw_value) {
     return (uint16_t)(((float)rpm_x10 / MOTOR_POLES_NUMBER) * 12);
 }//
 
-/*
-uint16_t pid_calculate_command(uint16_t current_rpm,float target_rpm) {
-
-    float error =  target_rpm - (float)current_rpm;
-
-    pid_filtered_error = (PID_D_FILTER_ALPHA * error) + ((1.0f - PID_D_FILTER_ALPHA) * pid_filtered_error);
-
-    float p_term = PID_KP * error;
-
-    pid_integral += error;
-    if (pid_integral > 1000) pid_integral = 1000;
-    if (pid_integral < -1000) pid_integral = -1000;
-    float i_term = PID_KI * pid_integral;
-
-    float d_term = PID_KD * (pid_filtered_error - pid_last_error);
-    pid_last_error = pid_filtered_error;
-
-    float new_command_float = DSHOT_BASE_COMMAND + p_term + i_term + d_term;
-
-    if (new_command_float < 48.0f) new_command_float = 48.0f;
-    if (new_command_float > 2047.0f) new_command_float = 2047.0f;
-
-    return (uint16_t)new_command_float;
-}
-*/
 
 
 /**
@@ -635,6 +615,7 @@ uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_s
  * @param target_rpm_signed The desired target RPM (signed: positive for forward, negative for reverse, 0 for stop/brake).
  * @return The calculated DShot command (48-2047 unidirectional).
 */
+/*
 uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed) {
     float current_rpm = (float)current_rpm_unsigned;
     float target_rpm = (target_rpm_signed < 0) ? 0.0f : target_rpm_signed;
@@ -646,15 +627,6 @@ uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_s
     // --- PID Calculations ---
      p_term = PID_KP * error;
 
-    // Integral with conditional reset
-/*    if (target_rpm == 0.0f) {
-        pid_integral = 0.0f;
-    } else {
-        pid_integral += error;
-     //   if (pid_integral > 5000.0f) pid_integral = 5000.0f;
-        if (pid_integral < -5000.0f) pid_integral = -5000.0f;
-    }
-    */
     i_term += PID_KI * error*0.0005;
 
     // Derivative
@@ -708,3 +680,66 @@ uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_s
     last_sent_dshot_command = dshot_command;
     return dshot_command;
 }
+*/
+uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed) {
+    float current_rpm = (float)current_rpm_unsigned;
+    float target_rpm = (target_rpm_signed < 0) ? 0.0f : target_rpm_signed;
+    float error = target_rpm - current_rpm;
+
+    // --- PID Terms ---
+    float p_term = PID_KP * error;
+
+    // Integrator: accumulate only when error small enough to avoid wind-up
+    if (target_rpm > 0.0f && fabsf(error) < target_rpm * 1.2f) {
+        i_term += PID_KI * error * 0.002f;  // faster integration rate
+        if (i_term > 500.0f) i_term = 500.0f;   // clamp to prevent runaway
+        if (i_term < -500.0f) i_term = -500.0f;
+    } else {
+        i_term *= 0.95f; // small decay to prevent wind-up
+    }
+
+    // Derivative (filtered)
+    float error_derivative = error - pid_last_error;
+    pid_last_error = error;
+    pid_filtered_error = (0.4f * error_derivative) + (0.6f * pid_filtered_error);
+    float d_term = PID_KD * pid_filtered_error;
+
+    float pid_output = p_term + i_term + d_term;
+
+    // --- FEEDFORWARD and SCALING ---
+    uint16_t dshot_command;
+
+    if (target_rpm <= 0.0f) {
+        dshot_command = DSHOT_BASE_COMMAND;
+        pid_last_error = pid_filtered_error = i_term = 0.0f;
+    } else {
+        // Feedforward tuned for faster startup
+        // Typical BLHeli_32 mapping ~0.18–0.25 per 1000 RPM
+        float base_ff = (float)DSHOT_BASE_COMMAND;
+        float ff_from_target = target_rpm * 0.22f; // was 0.15f
+
+        // PID correction scaling (more aggressive response)
+        float pid_correction = pid_output * 0.15f;
+
+        float total_dshot = base_ff + ff_from_target + pid_correction;
+        dshot_command = (uint16_t)total_dshot;
+
+        // Clamp range
+        if (dshot_command < DSHOT_BASE_COMMAND) dshot_command = DSHOT_BASE_COMMAND;
+        if (dshot_command > 2047) dshot_command = 2047;
+
+        //static uint16_t last_debug_cmd = 0;
+       // if (dshot_command != last_debug_cmd || HAL_GetTick() % 1000 == 0) {
+          //  Debug_Send_DMA("Tgt=%.0f, Curr=%.0f, Err=%.0f, PID=%.1f, CMD=%u\r\n",
+          //      target_rpm, current_rpm, error, pid_output, dshot_command);
+         //   last_debug_cmd = dshot_command;
+       // }
+    }
+
+    last_sent_dshot_command = dshot_command;
+    return dshot_command;
+}
+
+
+
+

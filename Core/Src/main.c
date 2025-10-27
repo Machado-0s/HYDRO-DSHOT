@@ -133,7 +133,7 @@ int main(void)
   MX_DMA_Init();
   MX_TIM1_Init();
   MX_TIM4_Init();
-  //MX_TIM3_Init();
+  MX_TIM3_Init();
   MX_USART1_UART_Init();
   UART_CMD_Init(&huart1); // Pass your UART handle
   PWM_Init();
@@ -163,12 +163,26 @@ int main(void)
 
 
   for (int i = 0; i < MOTORS_COUNT; i++) {
-	  motor_values[i] = prepare_Dshot_package(10, false); // Send 0 throttle (disarmed)
+	  motor_values[i] = prepare_Dshot_package(10, false);
      }
 
    for (int t = 0; t < 10; t++){
    update_motors_Tx_Only();
    }
+   //for (volatile int i = 0; i < 5000; i++);
+      HAL_Delay(200);
+
+   for (int i = 0; i < MOTORS_COUNT; i++) {
+   	  motor_values[i] = prepare_Dshot_package(12, false);
+        }
+
+   for (int t = 0; t < 10; t++){
+   update_motors_Tx_Only();
+   }
+   HAL_Delay(200);
+   //for (volatile int i = 0; i < 5000; i++);
+   //Power cycle the ESC (disconnect + reconnect battery)
+
 
    Debug_Send_DMA("--- STM32 DShot Controller Started ---\r\n");
 
@@ -177,7 +191,7 @@ int main(void)
   /* Infinite loop */
      /* USER CODE BEGIN WHILE */
      uint32_t last_50hz_time = 0;
-    // uint32_t last_100hz_time = 0;
+     uint32_t last_100hz_time = 0;
      uint32_t now2 = HAL_GetTick();
 
 
@@ -185,15 +199,21 @@ int main(void)
      bool telemetry_active = false; // Start with telemetry inactive until first successful read
      uint16_t current_rpm = 0;
 
-    // uint32_t last_periodic_print_time = HAL_GetTick();
-   //   const uint32_t PERIODIC_PRINT_INTERVAL_MS = 100; // 5 seconds
-   //  float  lastTarget[10] = {0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
+     ///uint32_t last_periodic_print_time = HAL_GetTick();
+     // const uint32_t PERIODIC_PRINT_INTERVAL_MS = 100; // 5 seconds
+    // float  lastTarget[10] = {0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
 
 
 
   /* Infinite loop */
   while (1) {
 	//  Debug_Send_DMA("VALUE:\r\n");
+
+	  // Check if new UART data is available and process it
+	  	         	          if (uart_new_data_available) {
+	  	         	              process_uart_command(); // This will parse and update received_numeric_value
+	  	         	         //  Debug_Send_DMA("NEW UART CMD processed!\r\n");
+	  	         	          }
 
 	  // Check if new telemetry data is ready
 	      if (telemetry_done_flag){
@@ -280,10 +300,7 @@ int main(void)
 	                 }
 	             }
 */
-	             // Check if new UART data is available and process it
-	         	          if (uart_new_data_available) {
-	         	              process_uart_command(); // This will parse and update received_numeric_value
-	         	          }
+
 
 
 	         	         // ---- SERVO PWM UPDATE - Different frequencies
@@ -301,17 +318,17 @@ int main(void)
 	         	             last_50hz_time = now2;
 	         	         }
 
-	         	         // Update 100Hz motors (every 10ms)
-	         	      //   if (now2 - last_100hz_time >= 10) {
-	         	       //      static uint16_t angle_100hz = 500;
-	         	       ////      angle_100hz += 5;
-	         	         ///    if (angle_100hz > 2500) angle_100hz = 500;
+	         	         //Update 100Hz motors (every 10ms)
+	         	        if (now2 - last_100hz_time >= 10) {
+	         	             static uint16_t angle_100hz = 500;
+	         	            angle_100hz += 5;
+	         	             if (angle_100hz > 2500) angle_100hz = 500;
 
-	         	       //      PWM_SetDuty(&htim3, TIM_CHANNEL_1, angle_100hz); // e.g., PB4 - 100Hz
-	         	       //      PWM_SetDuty(&htim3, TIM_CHANNEL_2, angle_100hz); // e.g., PB5 - 100Hz
+	         	             PWM_SetDuty(&htim3, TIM_CHANNEL_1, angle_100hz); // e.g., PB4 - 100Hz
+	         	             PWM_SetDuty(&htim3, TIM_CHANNEL_2, angle_100hz); // e.g., PB5 - 100Hz
 
-	         	       //      last_100hz_time = now2;
-	         	       //  }
+	         	             last_100hz_time = now2;
+	         	         }
 
         /* USER CODE BEGIN 3 */
     }

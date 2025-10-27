@@ -101,6 +101,23 @@ static const uint32_t GCR_table[32];
 void process_telemetry_with_new_method(void);
 void Debug_Send_DMA(const char* format, ...);
 
+/*
+ *
+ * DO NOT DELETE!!!!!!!!!!!
+void USART1_IRQHandler(void)
+{
+  if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET) {
+    __HAL_UART_CLEAR_IDLEFLAG(&huart1);
 
+    uint16_t dma_remaining_bytes = __HAL_DMA_GET_COUNTER(huart1.hdmarx);
+    uart_rx_write_pos = UART_RX_BUFFER_SIZE - dma_remaining_bytes;
+
+    uart_new_data_available = true;
+  }
+
+  HAL_UART_IRQHandler(&huart1);
+}
+ *
+ */
 
 #endif /* INC_DSHOT_H_ */
