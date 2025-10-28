@@ -19,6 +19,8 @@ char uart_tx_buffer[128];
 // External symbols
 extern UART_HandleTypeDef huart1;
 extern volatile float pid_target_speed_rpms[MOTORS_COUNT];
+extern uint16_t pwm_targets[4];
+
 
 void UART_CMD_Init(UART_HandleTypeDef *huart) {
     HAL_UART_Receive_DMA(huart, uart_rx_buffer, UART_RX_BUFFER_SIZE);
@@ -71,16 +73,14 @@ void process_uart_command(void) {
     uint16_t current_end_pos = uart_rx_write_pos;
 
     uint16_t bytes_received;
-    if (current_end_pos >= read_pos_tracker) {
+    if (current_end_pos >= read_pos_tracker)
         bytes_received = current_end_pos - read_pos_tracker;
-    } else {
+    else
         bytes_received = UART_RX_BUFFER_SIZE - read_pos_tracker + current_end_pos;
-    }
 
     uart_new_data_available = false;
     if (bytes_received == 0) return;
 
-    // Copy received bytes into a temporary buffer
     char temp_buffer[UART_RX_BUFFER_SIZE + 1];
     if (current_end_pos >= read_pos_tracker) {
         memcpy(temp_buffer, &uart_rx_buffer[read_pos_tracker], bytes_received);
@@ -88,51 +88,48 @@ void process_uart_command(void) {
         memcpy(temp_buffer, &uart_rx_buffer[read_pos_tracker], UART_RX_BUFFER_SIZE - read_pos_tracker);
         memcpy(temp_buffer + (UART_RX_BUFFER_SIZE - read_pos_tracker), uart_rx_buffer, current_end_pos);
     }
-    temp_buffer[bytes_received] = '\0'; // null-terminate
+    temp_buffer[bytes_received] = '\0';
     read_pos_tracker = current_end_pos;
 
-    // Process each line separately (split by '\r' or '\n')
     char *line = strtok(temp_buffer, "\r\n");
     while (line != NULL) {
-        // Trim leading spaces/tabs
         while (*line == ' ' || *line == '\t') line++;
-        // Trim trailing spaces/tabs
         size_t len = strlen(line);
-        while (len > 0 && (line[len-1] == ' ' || line[len-1] == '\t')) line[--len] = '\0';
+        while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\t')) line[--len] = '\0';
+        if (len == 0) { line = strtok(NULL, "\r\n"); continue; }
 
-        // Skip empty lines
-        if (len > 0) {
-            // Special case: "0.00" -> zero all motors
-            if (strcmp(line, "0.00") == 0) {
-                for (unsigned int i = 0; i < MOTORS_COUNT; i++)
-                    pid_target_speed_rpms[i] = 0.0f;
-                Debug_Send_DMA("CMD: Set ALL motors to 0 RPM\r\n");
-            } else {
-                // Parse command "<motor>.<rpm>"
-                unsigned int motor_idx;
-                float new_value;
-                int parsed_items = sscanf(line, "%u.%f", &motor_idx, &new_value);
+        if (strcmp(line, "0.00") == 0) {
+            for (unsigned int i = 0; i < MOTORS_COUNT; i++) pid_target_speed_rpms[i] = 0.0f;
+            pwm_targets[0] = pwm_targets[1] = pwm_targets[2] = pwm_targets[3] = 1500; // neutral
+            Debug_Send_DMA("CMD: Reset all motors\r\n");
+        } else {
+            unsigned int motor_idx;
+            float new_value;
+            int parsed = sscanf(line, "%u.%f", &motor_idx, &new_value);
 
-                if (parsed_items == 2) {
-                    if (motor_idx < MOTORS_COUNT) {
-                        // Clamp or validate RPM range if needed
-                        #define MAX_ALLOWED_VALUE 10000.0f
-                        #define MIN_ALLOWED_VALUE -10000.0f
-                        if (new_value >= MIN_ALLOWED_VALUE && new_value <= MAX_ALLOWED_VALUE) {
-                            pid_target_speed_rpms[motor_idx] = new_value;
-                            Debug_Send_DMA("CMD: M%u -> %.0f RPM\r\n", motor_idx, new_value);
-                        } else {
-                            Debug_Send_DMA("CMD: Value %.0f out of range\r\n", new_value);
-                        }
+            if (parsed == 2) {
+                // --- Handle DShot motors (0–9)
+                if (motor_idx < MOTORS_COUNT) {
+                    if (fabsf(new_value) <= 10000.0f) {
+                        pid_target_speed_rpms[motor_idx] = new_value;
+                        Debug_Send_DMA("CMD: M%u -> %.0f RPM\r\n", motor_idx, new_value);
+                    }
+                }
+                // --- Handle PWM motors (10–13)
+                else if (motor_idx >= 10 && motor_idx <= 13) {
+                    if (new_value >= 500 && new_value <= 2500) {
+                        pwm_targets[motor_idx - 10] = (uint16_t)new_value;
+                        Debug_Send_DMA("CMD: PWM%u -> %.0f us\r\n", motor_idx - 9, new_value);
                     } else {
-                        Debug_Send_DMA("CMD: Invalid motor %u\r\n", motor_idx);
+                        Debug_Send_DMA("CMD: PWM value %.0f out of range\r\n", new_value);
                     }
                 } else {
-                    Debug_Send_DMA("CMD: Bad format. Use: <motor>.<rpm>\r\n");
+                    Debug_Send_DMA("CMD: Invalid motor index %u\r\n", motor_idx);
                 }
+            } else {
+                Debug_Send_DMA("CMD: Bad format. Use <motor>.<value>\r\n");
             }
         }
-
-        line = strtok(NULL, "\r\n"); // next line in buffer
+        line = strtok(NULL, "\r\n");
     }
 }

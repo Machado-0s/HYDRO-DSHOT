@@ -10,10 +10,6 @@
 extern TIM_HandleTypeDef htim4;
 extern TIM_HandleTypeDef htim3;
 
-// Частота PWM 50 Гц (для сервоприводов)
-//#define PWM_FREQUENCY_HZ 50
-//#define TIMER_CLOCK_HZ   84000000 // 84 MHz
-
 void PWM_Init(void)
 {
     // Запуск PWM каналов

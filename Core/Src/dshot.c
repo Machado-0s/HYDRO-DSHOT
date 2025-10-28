@@ -24,7 +24,7 @@ volatile float d_term = 0.0;
 //If startup is still lazy, bump feedforward to 0.25f
 
 float PID_KP = 0.5f; //0.28f  // Proportional gain
-float PID_KI = 0.5f;//0.1f;//0.045f // Integral gain
+float PID_KI = 1.2f;//0.1f;//0.045f // Integral gain
 float PID_KD = 0.01f;  // Derivative gain
 
 // PID Target RPMs - Array to hold target RPM for each motor
@@ -508,194 +508,30 @@ uint16_t get_rpm_from_telemetry(uint16_t raw_value) {
     if (raw_value == 0) return 0;
     uint16_t rpm_x10 = (raw_value >> 4);
     return (uint16_t)(((float)rpm_x10 / MOTOR_POLES_NUMBER) * 12);
-}//
-
-
-
-/**
- * @brief Calculates the DShot command based on PID controller logic for bi-directional motors.
- * @param current_rpm_unsigned The current measured RPM of the motor (always positive from telemetry).
- * @param target_rpm_signed The desired target RPM (signed: positive for forward, negative for reverse, 0 for stop/brake).
- * @return The calculated DShot command (1-2047 bi-directional).
- */
-/*
-uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed) {
-    float error;
-    float current_rpm_for_error_calc; // Signed version of current_rpm_unsigned for PID error calc
-
-    // --- Step 1: Infer Current Motor Direction from last_sent_dshot_command ---
-    // This is the key: we use the last command sent to infer the *actual* direction.
-    if (last_sent_dshot_command > DSHOT_BI_DIR_DEADBAND_HIGH) { // Last command was in forward range
-        current_rpm_for_error_calc = (float)current_rpm_unsigned; // Treat as positive RPM
-    } else if (last_sent_dshot_command < DSHOT_BI_DIR_DEADBAND_LOW && last_sent_dshot_command > 0) { // Last command was in reverse range (and not stop)
-        current_rpm_for_error_calc = -(float)current_rpm_unsigned; // Treat as negative RPM
-    } else { // Last command was in deadband/stop zone, or was 0 (motor stop)
-        current_rpm_for_error_calc = 0.0f; // Assume motor is stopped or very near stop
-    }
-
-    // --- Step 2: Calculate Error ---
-    // The error is the difference between the desired signed target and the inferred signed current.
-    error = target_rpm_signed - current_rpm_for_error_calc;
-
-    // --- Step 3: Calculate PID Terms ---
-    // Proportional term
-    float p_term = PID_KP * error;
-
-    // Integral term (with windup protection). Reset if passing through zero or at zero target.
-    // Reset integral if target is 0 to avoid massive windup from previous positive/negative errors.
-    if (target_rpm_signed == 0.0f) {
-        pid_integral = 0.0f;
-    } else {
-        pid_integral += error;
-        if (pid_integral > 1000) pid_integral = 1000;
-        if (pid_integral < -1000) pid_integral = -1000;
-    }
-    float i_term = PID_KI * pid_integral;
-
-    // Derivative term (with low-pass filter)
-    pid_filtered_error = (PID_D_FILTER_ALPHA * error) + ((1.0f - PID_D_FILTER_ALPHA) * pid_filtered_error);
-    float d_term = PID_KD * (pid_filtered_error - pid_last_error);
-    pid_last_error = pid_filtered_error;
-
-    // --- Step 4: Calculate Raw PID Output (signed) ---
-    float raw_pid_output = p_term + i_term + d_term;
-
-    // --- Step 5: Map PID Output to Bi-directional DShot Command ---
-    float dshot_command_float;
-
-    if (target_rpm_signed == 0) {
-        // If target is explicitly zero, command the deadband center
-        dshot_command_float = (float)DSHOT_BI_DIR_MIDPOINT;
-        // Also reset integral and derivative components for a clean stop
-        pid_integral = 0.0f;
-        pid_last_error = 0.0f;
-        pid_filtered_error = 0.0f;
-    } else if (raw_pid_output >= 0) { // PID wants forward thrust
-        // Map positive raw_pid_output (0 to MAX_ABS_RPM_FOR_MAPPING) to DShot forward range
-        float scaled_output_percent = raw_pid_output / MAX_ABS_RPM_FOR_MAPPING;
-        if (scaled_output_percent > 1.0f) scaled_output_percent = 1.0f; // Cap at max
-
-        dshot_command_float = (scaled_output_percent * (DSHOT_BI_DIR_MAX_FORWARD - DSHOT_BI_DIR_DEADBAND_HIGH)) + DSHOT_BI_DIR_DEADBAND_HIGH;
-
-        // Ensure command is at least the minimum forward value
-        if (dshot_command_float < DSHOT_BI_DIR_DEADBAND_HIGH) dshot_command_float = DSHOT_BI_DIR_DEADBAND_HIGH;
-        // Clamp to max DShot command
-        if (dshot_command_float > DSHOT_BI_DIR_MAX_FORWARD) dshot_command_float = DSHOT_BI_DIR_MAX_FORWARD;
-
-    } else { // PID wants reverse thrust (raw_pid_output < 0)
-        // Map negative raw_pid_output (0 to -MAX_ABS_RPM_FOR_MAPPING) to DShot reverse range
-        float scaled_output_percent = fabsf(raw_pid_output) / MAX_ABS_RPM_FOR_MAPPING; // Use absolute value
-        if (scaled_output_percent > 1.0f) scaled_output_percent = 1.0f; // Cap at max absolute
-
-        dshot_command_float = DSHOT_BI_DIR_DEADBAND_LOW - (scaled_output_percent * (DSHOT_BI_DIR_DEADBAND_LOW - DSHOT_BI_DIR_MIN_REVERSE));
-
-        // Ensure command is at most the maximum reverse value
-        if (dshot_command_float > DSHOT_BI_DIR_DEADBAND_LOW) dshot_command_float = DSHOT_BI_DIR_DEADBAND_LOW;
-        // Clamp to min DShot command
-        if (dshot_command_float < DSHOT_BI_DIR_MIN_REVERSE) dshot_command_float = DSHOT_BI_DIR_MIN_REVERSE;
-    }
-
-    // --- Step 6: Store and Return the Final Command ---
-    uint16_t final_clamped_command = (uint16_t)dshot_command_float;
-    last_sent_dshot_command = final_clamped_command; // Store for next iteration's direction inference
-
-    // Debug output (uncomment for debugging)
-    // Debug_Send_DMA("PID | Tgt:%.0f | Curr:%.0f | Err:%.0f | P:%.2f | I:%.2f | D:%.2f | Cmd:%u | LastCmd:%u\r\n",
-    //                target_rpm_signed, current_rpm_for_error_calc, error, p_term, i_term, d_term, final_clamped_command, last_sent_dshot_command);
-
-    return final_clamped_command;
 }
-*/
 
 
-/**
- * @brief Calculates the DShot command based on PID controller logic for unidirectional motors.
- * For testing purposes, this function maps all negative or zero target RPMs to DSHOT_BASE_COMMAND (48).
- * @param current_rpm_unsigned The current measured RPM of the motor (always positive from telemetry).
- * @param target_rpm_signed The desired target RPM (signed: positive for forward, negative for reverse, 0 for stop/brake).
- * @return The calculated DShot command (48-2047 unidirectional).
-*/
-/*
-uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed) {
+  uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed)
+{
     float current_rpm = (float)current_rpm_unsigned;
-    float target_rpm = (target_rpm_signed < 0) ? 0.0f : target_rpm_signed;
-    float error = target_rpm - current_rpm;
-
-    // --- More Realistic PID Gains ---
-
-
-    // --- PID Calculations ---
-     p_term = PID_KP * error;
-
-    i_term += PID_KI * error*0.0005;
-
-    // Derivative
-    float error_derivative = error - pid_last_error;
-    pid_last_error = error;
-    pid_filtered_error = (0.3f * error_derivative) + (0.7f * pid_filtered_error);
-     d_term = PID_KD * pid_filtered_error;
-
-    float pid_output = p_term + i_term + d_term;
-
-    // --- FIXED: Proper Feedforward and Scaling ---
-    uint16_t dshot_command;
-
-    if (target_rpm <= 0.0f) {
-        dshot_command = DSHOT_BASE_COMMAND; // 48
-        pid_integral = 0.0f;
-        pid_last_error = 0.0f;
-        pid_filtered_error = 0.0f;
-    } else {
-        // Base feedforward for the target RPM
-        // For 1000 RPM target, we need a reasonable DShot command
-        // Typical mapping: 0 RPM = 48, 1000 RPM ≈ 200-400, 10000 RPM = 2047
-
-        float base_ff = (float)DSHOT_BASE_COMMAND; // Start at 48
-
-        // Feedforward based on target RPM (open-loop estimate)
-        // Adjust this multiplier based on your motor characteristics
-        float ff_from_target = target_rpm * 0.15f; // 1000 RPM → 150 additional
-
-        // PID correction (scale PID output appropriately)
-        // PID output is in RPM units, scale to DShot units
-        float pid_correction = pid_output * 0.1f; // Scale PID output
-
-        float total_dshot = base_ff + ff_from_target + pid_correction;
-
-        dshot_command = (uint16_t)total_dshot;
-
-        // Clamp to valid range
-        if (dshot_command < DSHOT_BASE_COMMAND) dshot_command = DSHOT_BASE_COMMAND;
-        if (dshot_command > 2047) dshot_command = 2047;
-
-        // DEBUG
-        static uint16_t last_debug_cmd = 0;
-        if (dshot_command != last_debug_cmd || HAL_GetTick() % 1000 == 0) {
-            Debug_Send_DMA("FIXED: Tgt=%.0f, Err=%.0f, FF=%.1f, PID=%.1f, CMD=%u\r\n",
-                         target_rpm, error, ff_from_target, pid_correction, dshot_command);
-            last_debug_cmd = dshot_command;
-        }
-    }
-
-    last_sent_dshot_command = dshot_command;
-    return dshot_command;
-}
-*/
-uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_signed) {
-    float current_rpm = (float)current_rpm_unsigned;
-    float target_rpm = (target_rpm_signed < 0) ? 0.0f : target_rpm_signed;
+    float target_rpm = target_rpm_signed;
+    uint8_t count = 0;
+    if(target_rpm <0){
+    	count = 2;
+    	target_rpm = target_rpm * -1;
+    }else if(target_rpm > 0)count=1;
     float error = target_rpm - current_rpm;
 
     // --- PID Terms ---
     float p_term = PID_KP * error;
 
-    // Integrator: accumulate only when error small enough to avoid wind-up
-    if (target_rpm > 0.0f && fabsf(error) < target_rpm * 1.2f) {
-        i_term += PID_KI * error * 0.002f;  // faster integration rate
-        if (i_term > 500.0f) i_term = 500.0f;   // clamp to prevent runaway
+    // Integrator: accumulate only when within reasonable error bounds
+    if (fabsf(target_rpm) > 0.0f && fabsf(error) < fabsf(target_rpm) * 1.2f) {
+        i_term += PID_KI * error * 0.005f;
+        if (i_term > 500.0f) i_term = 500.0f;
         if (i_term < -500.0f) i_term = -500.0f;
     } else {
-        i_term *= 0.95f; // small decay to prevent wind-up
+        i_term *= 0.95f;
     }
 
     // Derivative (filtered)
@@ -707,38 +543,47 @@ uint16_t pid_calculate_command(uint32_t current_rpm_unsigned, float target_rpm_s
     float pid_output = p_term + i_term + d_term;
 
     // --- FEEDFORWARD and SCALING ---
-    uint16_t dshot_command;
+    float ff_from_target = fabsf(target_rpm) * 0.15f;
+    float pid_correction = pid_output * 0.15f;
+    float throttle_value = ff_from_target + pid_correction;
 
-    if (target_rpm <= 0.0f) {
-        dshot_command = DSHOT_BASE_COMMAND;
-        pid_last_error = pid_filtered_error = i_term = 0.0f;
+    // --- Map to DShot range ---
+    // DShot bidirectional uses mid = 1048 as zero throttle
+    const float DSHOT_NEUTRAL = 1048.0f;
+    const float DSHOT_MIN = 48.0f;
+    const float DSHOT_MAX = 2047.0f;
+
+    float dshot_f = DSHOT_NEUTRAL;
+
+    if (count == 1) {
+        dshot_f = DSHOT_NEUTRAL + throttle_value;  // forward
+    } else if (count == 2) {
+        dshot_f = 48.0f + throttle_value;  // reverse
     } else {
-        // Feedforward tuned for faster startup
-        // Typical BLHeli_32 mapping ~0.18–0.25 per 1000 RPM
-        float base_ff = (float)DSHOT_BASE_COMMAND;
-        float ff_from_target = target_rpm * 0.22f; // was 0.15f
-
-        // PID correction scaling (more aggressive response)
-        float pid_correction = pid_output * 0.15f;
-
-        float total_dshot = base_ff + ff_from_target + pid_correction;
-        dshot_command = (uint16_t)total_dshot;
-
-        // Clamp range
-        if (dshot_command < DSHOT_BASE_COMMAND) dshot_command = DSHOT_BASE_COMMAND;
-        if (dshot_command > 2047) dshot_command = 2047;
-
-        //static uint16_t last_debug_cmd = 0;
-       // if (dshot_command != last_debug_cmd || HAL_GetTick() % 1000 == 0) {
-          //  Debug_Send_DMA("Tgt=%.0f, Curr=%.0f, Err=%.0f, PID=%.1f, CMD=%u\r\n",
-          //      target_rpm, current_rpm, error, pid_output, dshot_command);
-         //   last_debug_cmd = dshot_command;
-       // }
+        // Dead stop
+        pid_last_error = pid_filtered_error = i_term = 0.0f;
+        dshot_f = 0;
+        return 0;
     }
 
+    // Clamp
+    if (dshot_f < DSHOT_MIN) dshot_f = DSHOT_MIN;
+    if (dshot_f > DSHOT_MAX) dshot_f = DSHOT_MAX;
+
+    uint16_t dshot_command = (uint16_t)dshot_f;
+
+  //  static uint16_t last_debug_cmd = 0;
+  //  if (dshot_command != last_debug_cmd || HAL_GetTick() % 1000 == 0) {
+    //    Debug_Send_DMA("Tgt=%.0f, Curr=%.0f, Err=%.0f, PID=%.1f, CMD=%u\r\n",
+     //                  target_rpm, current_rpm, error, pid_output, dshot_command);
+     //   last_debug_cmd = dshot_command;
+  //  }
+
     last_sent_dshot_command = dshot_command;
+    count = 0;
     return dshot_command;
 }
+
 
 
 

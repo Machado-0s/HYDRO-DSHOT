@@ -34,7 +34,7 @@
 #include <stdio.h>
 #include "pwm.h"
 #include "usart.h"
-#include "uart_cmd.h" // For UART command functions and variables
+#include "uart_cmd.h"
 
 
 /* Private includes ----------------------------------------------------------*/
@@ -67,11 +67,7 @@
 void SystemClock_Config(void);
 void Error_Handler(void);
 /* USER CODE BEGIN PFP */
-// Add this function somewhere globally
 
-// Redirect printf to software UART
-
-// Add DWT delay utility at the top of main.c:
 #define DWT_CYCCNT ((volatile uint32_t *)0xE0001004)
 void DWT_Delay(uint32_t microseconds) {
     uint32_t start = *DWT_CYCCNT;
@@ -96,7 +92,9 @@ extern UART_HandleTypeDef huart1;
 volatile uint8_t dshot_send_flag = 0;
 volatile bool uart_tx_ready = true; // TX flag
 
-float value = 1000.0;
+float value = 0.0;
+uint16_t pwm_targets[4] = {1500, 1500, 1500, 1500};
+
 /* USER CODE END 0 */
 
 /**
@@ -135,7 +133,7 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM3_Init();
   MX_USART1_UART_Init();
-  UART_CMD_Init(&huart1); // Pass your UART handle
+  UART_CMD_Init(&huart1);
   PWM_Init();
 
 
@@ -166,22 +164,20 @@ int main(void)
 	  motor_values[i] = prepare_Dshot_package(10, false);
      }
 
-   for (int t = 0; t < 10; t++){
+   for (int t = 0; t < 6; t++){
    update_motors_Tx_Only();
    }
-   //for (volatile int i = 0; i < 5000; i++);
-      HAL_Delay(200);
+
 
    for (int i = 0; i < MOTORS_COUNT; i++) {
    	  motor_values[i] = prepare_Dshot_package(12, false);
         }
 
-   for (int t = 0; t < 10; t++){
+   for (int t = 0; t < 6; t++){
    update_motors_Tx_Only();
    }
-   HAL_Delay(200);
-   //for (volatile int i = 0; i < 5000; i++);
-   //Power cycle the ESC (disconnect + reconnect battery)
+   HAL_Delay(40);
+
 
 
    Debug_Send_DMA("--- STM32 DShot Controller Started ---\r\n");
@@ -199,21 +195,17 @@ int main(void)
      bool telemetry_active = false; // Start with telemetry inactive until first successful read
      uint16_t current_rpm = 0;
 
-     ///uint32_t last_periodic_print_time = HAL_GetTick();
-     // const uint32_t PERIODIC_PRINT_INTERVAL_MS = 100; // 5 seconds
-    // float  lastTarget[10] = {0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
-
 
 
   /* Infinite loop */
   while (1) {
-	//  Debug_Send_DMA("VALUE:\r\n");
 
 	  // Check if new UART data is available and process it
-	  	         	          if (uart_new_data_available) {
-	  	         	              process_uart_command(); // This will parse and update received_numeric_value
-	  	         	         //  Debug_Send_DMA("NEW UART CMD processed!\r\n");
-	  	         	          }
+	  if (uart_new_data_available) {
+		  process_uart_command();
+
+	  }
+
 
 	  // Check if new telemetry data is ready
 	      if (telemetry_done_flag){
@@ -239,8 +231,7 @@ int main(void)
 	              }else {
 	            	  //current_rpm_for_pid = (uint32_t)fabsf(current_pid_target);
 	              }
-	              //if(current_rpm < 800 || current_rpm == 0)current_rpm = pid_target_speed_rpm ;
-	             // uint16_t new_command = pid_calculate_command(current_rpm);
+
 	              // Calculate PID command. Pass the current RPM and the target RPM from UART.
 	               uint16_t new_command = pid_calculate_command(current_rpm, pid_target_rpm_from_uart);
 	              motor_values[m] = prepare_Dshot_package(new_command, false);
@@ -274,61 +265,25 @@ int main(void)
 	          update_motors_Tx_Only();
 	      }
 
-/*
-	          // --- Periodic RPM and DShot Command Output ---
-	             if ((HAL_GetTick() - last_periodic_print_time) >= PERIODIC_PRINT_INTERVAL_MS ) {
-	                 last_periodic_print_time = HAL_GetTick(); // Reset the timer
-
-	                 //Debug_Send_DMA("--- Current Motor Status (%lu ms) ---\r\n", HAL_GetTick());
-	                 for (int m = 0; m < MOTORS_COUNT; m++) {
-	                	 if(lastTarget[m] != pid_target_speed_rpms[m]){
-	                     float current_target_rpm = pid_target_speed_rpms[m];
-	                     uint32_t current_telemetry_rpm = motor_telemetry_data[m].raw_rpm_value;
-	                     float current_physical_rpm = current_telemetry_rpm / (14.0f / 2.0f); // Assuming 14 poles / 7 pole pairs
-	                     uint16_t last_dshot_command_sent = (uint16_t)(motor_values[m] >> 4); // Extract throttle from DShot package
-
-	                    // Debug_Send_DMA("Motor: %d | Tgt RPM: %.0f | Curr ERPM: %lu | Curr Phys RPM: %.2f | Last DShot Cmd: %u | Valid Telemetry: %s\r\n",
-	                            //        m,
-	                             //       current_target_rpm,
-	                              //      current_telemetry_rpm,
-	                              //      current_physical_rpm,
-	                                //    last_dshot_command_sent,
-	                                //    motor_telemetry_data[m].valid_rpm ? "Yes" : "No");
-	                 }
-	                // Debug_Send_DMA("---\r\n");
-	                 lastTarget[m] = pid_target_speed_rpms[m];
-	                 }
-	             }
-*/
 
 
+	      // ---- SERVO PWM UPDATE - Different frequencies
+	      now2 = HAL_GetTick();
 
-	         	         // ---- SERVO PWM UPDATE - Different frequencies
-	         	         now2 = HAL_GetTick();
+	      // Update 50Hz PWM motors every 20ms
+	      if (now2 - last_50hz_time >= 20) {
+	    	  PWM_SetDuty(&htim4, TIM_CHANNEL_1, pwm_targets[0]); // PB6
+	    	  PWM_SetDuty(&htim4, TIM_CHANNEL_2, pwm_targets[1]); // PB7
+	    	  last_50hz_time = now2;
+	      }
 
-	         	         // Update 50Hz motors (every 20ms)
-	         	         if (now2 - last_50hz_time >= 20) {
-	         	             static uint16_t angle_50hz = 500;
-	         	             angle_50hz += 5;
-	         	             if (angle_50hz > 2500) angle_50hz = 500;
+	      // Update 100Hz PWM motors every 10ms
+	      if (now2 - last_100hz_time >= 10) {
+	    	  PWM_SetDuty(&htim3, TIM_CHANNEL_1, pwm_targets[2]); // PB4
+	    	  PWM_SetDuty(&htim3, TIM_CHANNEL_2, pwm_targets[3]); // PB5
+	    	  last_100hz_time = now2;
 
-	         	             PWM_SetDuty(&htim4, TIM_CHANNEL_1, angle_50hz); // PB6 - 50Hz
-	         	             PWM_SetDuty(&htim4, TIM_CHANNEL_2, angle_50hz); // PB7 - 50Hz
-
-	         	             last_50hz_time = now2;
-	         	         }
-
-	         	         //Update 100Hz motors (every 10ms)
-	         	        if (now2 - last_100hz_time >= 10) {
-	         	             static uint16_t angle_100hz = 500;
-	         	            angle_100hz += 5;
-	         	             if (angle_100hz > 2500) angle_100hz = 500;
-
-	         	             PWM_SetDuty(&htim3, TIM_CHANNEL_1, angle_100hz); // e.g., PB4 - 100Hz
-	         	             PWM_SetDuty(&htim3, TIM_CHANNEL_2, angle_100hz); // e.g., PB5 - 100Hz
-
-	         	             last_100hz_time = now2;
-	         	         }
+	      }
 
         /* USER CODE BEGIN 3 */
     }

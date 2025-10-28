@@ -13,4 +13,4 @@
 ../Core/Src/dshot.c:448:7:read_BDshot_response	40	static
 ../Core/Src/dshot.c:497:6:process_telemetry_with_new_method	16	static
 ../Core/Src/dshot.c:507:10:get_rpm_from_telemetry	24	static
-../Core/Src/dshot.c:684:10:pid_calculate_command	64	static
+../Core/Src/dshot.c:514:12:pid_calculate_command	80	static
